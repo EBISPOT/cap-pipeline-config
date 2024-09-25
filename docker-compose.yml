@@ -1,78 +1,121 @@
-version: '3.3'
+version: '3.8'
 
 services:
-  vfb-triplestore:
-    image: matentzn/vfb-pipeline-triplestore
-    # use this image if you are using a mac with m1 chip
-    # image: eclipse/rdf4j-workbench:arm64v8-3.5.0
+  triplestore:
+    image: eclipse/rdf4j-workbench:5.0.2
     container_name: triplestore
     environment:
-      - JVM_PARAMS=-Xms1G -Xmx5G
-      - RDF4J_DATA=/data
+      - JAVA_OPTS=-Xms1G -Xmx5G
     ports:
       - 8080:8080
-  vfb-collectdata:
-    image: matentzn/vfb-pipeline-collectdata:latest
-    container_name: collectdata
-    build:
-      context: ../vfb-pipeline-collectdata
-      dockerfile: Dockerfile
-      args:
-        - CONF_REPO=${CONF_REPO}
-        - CONF_BRANCH=${CONF_BRANCH}
-    environment:
-      - KBserver=http://vfb-kb:7474
     volumes:
-      - vfb_data:/out
-  vfb-updatetriplestore:
-    image: matentzn/vfb-pipeline-updatetriplestore:latest
-    container_name: updatetriplestore
-    build:
-      context: ../vfb-pipeline-updatetriplestore
-      dockerfile: Dockerfile
-      args:
-        - CONF_REPO=${CONF_REPO}
-        - CONF_BRANCH=${CONF_BRANCH}
-    depends_on:
-      - vfb-collectdata
-      - vfb-triplestore
+      - triplestore_data:/var/rdf4j
+  obask-kb:
+    image: ghcr.io/obasktools/obask-kb:latest
+    container_name: obask-kb
+    environment:
+      - NEO4J_AUTH=neo4j/neo
+      - NEO4J_dbms_read__only=false
+      - NEO4J_dbms_memory_heap_maxSize=4G
+      - NEO4J_dbms_memory_heap_initial__size=1G
+    ports:
+      - 7474:7474
+      - 7687:7687
     links:
-      - vfb-triplestore
+      - solr
+    depends_on:
+      obask-dumps:
+        condition: service_completed_successfully
+    volumes:
+      - obask_data:/input
+    healthcheck:
+      test: [ "CMD", "wget", "-O", "-", "http://obask-kb:7474" ]
+      interval: 18s
+      timeout: 12s
+      retries: 20
+      start_period: 3s
+  obask-collectdata:
+    image: ghcr.io/obasktools/pipeline-collectdata:latest
+    container_name: collectdata
+    depends_on:
+      - triplestore
+    volumes:
+      - ./config/collectdata:/opt/conf_base/config/collectdata
+      - obask_data:/out
+  obask-updatetriplestore:
+    image: ghcr.io/obasktools/pipeline-updatetriplestore:latest
+    container_name: updatetriplestore
+    depends_on:
+      obask-collectdata:
+        condition: service_completed_successfully
+    links:
+      - triplestore
     environment:
       - SERVER=http://triplestore:8080
     volumes:
-      - vfb_data:/data
-  vfb-dumps:
-    image: matentzn/vfb-pipeline-dumps:latest
+      - ./config/updatetriplestore:/opt/conf_base/config/updatetriplestore
+      - obask_data:/data
+  obask-dumps:
+    image: ghcr.io/obasktools/pipeline-dumps:latest
     container_name: dumps
-    build:
-      context: ../cap-pipeline-dumps
-      dockerfile: Dockerfile
-      args:
-        - CONF_REPO=${CONF_REPO}
-        - CONF_BRANCH=${CONF_BRANCH}
     depends_on:
-      - vfb-updatetriplestore
-      - vfb-triplestore
+      obask-updatetriplestore:
+        condition: service_completed_successfully
     links:
-      - vfb-triplestore
+      - triplestore
     volumes:
-      - vfb_data:/out
+      - ./config/dumps:/opt/conf_base/config/dumps
+      - obask_data:/out
+  obask-updateprod:
+    image: ghcr.io/obasktools/pipeline-updateprod:latest
+    container_name: updateprod
+    depends_on:
+      obask-kb:
+        condition: service_healthy
+    links:
+      - obask-kb
+    environment:
+      - password=neo4j/neo
+      - server=http://obask-kb:7474
+    volumes:
+      - ./config/update-prod:/opt/conf_base/config/update-prod
+      - obask_data:/input
   solr:
-    image: virtualflybrain/vfb-solr
+    image: solr:8.11
     container_name: solr
     ports:
      - 8993:8983
     depends_on:
-      - vfb-dumps
+      - obask-dumps
     links:
-      - vfb-dumps
+      - obask-dumps
     volumes:
       - solr_data:/var/solr
     entrypoint:
     - bash
     - "-c"
     - "precreate-core ontology; precreate-core bdsdump; exec solr -f"
+  obask-updatesolr:
+    image: ghcr.io/obasktools/pipeline-updatesolr:latest
+    container_name: updatesolr
+    links:
+      - solr
+    volumes:
+      - obask_data:/data
+    depends_on:
+      obask-dumps:
+        condition: service_completed_successfully
+  obask-ontology-search:
+    image: ghcr.io/obasktools/ontology-search:latest
+    container_name: ontology-search
+    ports:
+     - 8007:8007
+    depends_on:
+      - solr
+      - obask-updatesolr
+    links:
+      - solr
 volumes:
-  vfb_data:
+  obask_data:
   solr_data:
+  triplestore_data:
