@@ -29,7 +29,6 @@ neo_node_labelling:
     label: Mammalia
   - classes:
       - NCBITaxon:7215
-      - FBbt:10000000
     label: Drosophila
   - classes:
       - NCBITaxon:8353
