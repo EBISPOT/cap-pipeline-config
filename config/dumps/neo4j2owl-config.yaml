@@ -53,12 +53,8 @@ neo_node_labelling:
     label: Disease
   - classes:
       - UBERON:0000105
-      - FBdv:00007012
-      - WBls:0000075
-      - ZFS:0100000
       - MmusDv:0000000
       - HsapDv:0000000
-      - XAO:1000000
     label: Developmental_stage
   - classes:
       - RO:0002131 some CL:0000010
